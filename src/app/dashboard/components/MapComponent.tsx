@@ -17,12 +17,14 @@ interface MapComponentProps {
   isCreatingSpot: boolean
   onMarkerPositionChange: (position: L.LatLng | null) => void
   onMarkerCreated: () => void
+  onUserPositionChange: (position: L.LatLng | null) => void
 }
 
 export default function MapComponent({
   isCreatingSpot,
   onMarkerPositionChange,
-  onMarkerCreated
+  onMarkerCreated,
+  onUserPositionChange
 }: MapComponentProps) {
   const mapRef = useRef<L.Map | null>(null)
   const mapContainerRef = useRef<HTMLDivElement>(null)
@@ -58,8 +60,16 @@ export default function MapComponent({
     // Inicializa o mapa
     const map = L.map(mapContainerRef.current, {
       zoomControl: false,
-      minZoom: 15,
-      maxZoom: 19
+      minZoom: 3,
+      maxZoom: 19,
+      zoomAnimation: true,
+      zoomAnimationThreshold: 4,
+      fadeAnimation: true,
+      markerZoomAnimation: true,
+      renderer: L.canvas({
+        padding: 0.5,
+        tolerance: 0
+      })
     }).setView([0, 0], 16)
     mapRef.current = map
 
@@ -68,26 +78,54 @@ export default function MapComponent({
 
     // Adiciona o tile layer do OpenStreetMap
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
+      attribution: '© OpenStreetMap contributors',
+      updateWhenIdle: true,
+      updateWhenZooming: true,
+      keepBuffer: 4,
+      maxZoom: 19,
+      minZoom: 3
     }).addTo(map)
 
     // Adiciona controle de zoom personalizado no canto inferior direito
     L.control.zoom({
       position: 'bottomright',
       zoomInText: '+',
-      zoomOutText: '-'
+      zoomOutText: '-',
+      zoomInTitle: 'Aumentar zoom',
+      zoomOutTitle: 'Diminuir zoom'
     }).addTo(map)
+
+    // Event listeners para garantir renderização correta
+    map.on('zoomstart', () => {
+      map.invalidateSize()
+    })
+
+    map.on('zoomend', () => {
+      map.invalidateSize()
+    })
+
+    map.on('moveend', () => {
+      map.invalidateSize()
+    })
+
+    map.on('resize', () => {
+      map.invalidateSize()
+    })
 
     // Função para adicionar a localização do usuário
     const addUserLocation = (position: GeolocationPosition) => {
       if (!mapRef.current) return
 
       const { latitude, longitude } = position.coords
-      mapRef.current.setView([latitude, longitude], 16)
+      const userLatLng = L.latLng(latitude, longitude)
+      mapRef.current.setView(userLatLng, 16)
+      
+      // Notifica o componente pai sobre a posição do usuário
+      onUserPositionChange(userLatLng)
       
       // Adiciona um círculo azul na localização do usuário com tamanho fixo
       const accuracy = position.coords.accuracy
-      const circle = L.circleMarker([latitude, longitude], {
+      const circle = L.circleMarker(userLatLng, {
         radius: 15,
         color: '#3B82F6',
         fillColor: '#3B82F6',
@@ -98,7 +136,7 @@ export default function MapComponent({
       userMarkerRef.current = circle
 
       // Adiciona um círculo menor no centro para melhor visualização
-      L.circleMarker([latitude, longitude], {
+      L.circleMarker(userLatLng, {
         radius: 8,
         color: '#3B82F6',
         fillColor: '#3B82F6',
@@ -168,7 +206,7 @@ export default function MapComponent({
         publicSpotCreatorRef.current.stopCreation()
       }
     }
-  }, [loadMarkers])
+  }, [loadMarkers, onUserPositionChange])
 
   // Efeito para gerenciar o modo de criação de spots
   useEffect(() => {
@@ -204,6 +242,20 @@ export default function MapComponent({
       onMarkerPositionChange(null)
     }
   }, [isCreatingSpot, onMarkerPositionChange])
+
+  // Efeito para lidar com redimensionamento da janela
+  useEffect(() => {
+    const handleResize = () => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize()
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [])
 
   return (
     <div 
